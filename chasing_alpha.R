@@ -1,3 +1,6 @@
+# Accompanying code for "Chasing Alpha" presentation
+# Author: David Schemitsch
+
 library(ggplot2)
 library(glue)
 library(httr)
@@ -6,6 +9,7 @@ library(stringr)
 library(humaniformat)
 library(stringi)
 library(xml2)
+library(rvest)
 
 # Parse CIK lookup file ----
 suffixes = 'JR$|JR\\.$|SR$|SR\\.$|II$|III$|IV$|ESQ$|ESQ\\.$|\\sMD$'
@@ -22,30 +26,48 @@ ciks[, middle_name := str_trim(str_sub(first_middle_name, nchar(first_name)+1))]
 ciks[, suffix := str_extract(middle_name, suffixes)]
 ciks[, middle_name := str_trim(str_remove_all(middle_name, suffixes))]
 
-ciks[, .(cik, entity, first_name, middle_name, last_name)]
-
+# Row for Jeff Bezos
 ciks[cik == '0001043298', .(original, cik, first_name, middle_name, last_name, suffix)]
 
-# https://www.sec.gov/dera/data/dera_edgarfilingcounts
-df <- fread("C:/Users/ds3300/Downloads/filings_type_year_1220.csv")
-
-df_4 = df[Type %in% c('4', '4/A')]
-df_4 = df_4[, .(Year_Count = sum(Count)), by = Year]
-
-ggplot(data = df_4, aes(x = Year, y = Year_Count)) + geom_line()
-
-df_DEF = df[Type == 'DEF 14A']
-df_DEF = df_DEF[, .(Year_Count = sum(Count)), by = Year]
-
-ggplot(data = df_DEF, aes(x = Year, y = Year_Count)) + geom_line()
-
 # API options ----
-CIK = '1661964'
+CIK = '0001661964'
 type = '4'
 before = ''
 count = 20
 page = 1
 
+
+# Approach 1: Use API ----
+
+# User Agent declaration
+get_sec <- function(url, ua){
+    
+    res <- httr::GET(url = url, 
+                     httr::user_agent(ua),
+                     add_headers("user-agent" = ua))
+    
+    if (res$status == 200){
+        # Use read_xml or read_html based on the url
+        if (str_detect(string = url, pattern = regex('xml$', ignore_case = TRUE))){
+            doc <- xml2::read_xml(res)
+        } else {
+            doc <- xml2::read_html(res, base_url = url, options = "HUGE")    
+        }
+    } else if (res$status == "403") {
+        stop(glue("403 Error: Too many requests. Try waiting a few minutes and restart the search."))
+    } else if (res$status != "200" | res$headers["content-type"] != "application/atom+xml") {
+        stop(paste0("Error: Could not find company: ", issuer_cik))
+    }
+    
+    return(doc)
+    
+}
+
+my_email_address = readline(prompt = 'enter email address: ')
+my_organization = readline(prompt = 'enter organization name: ')
+ua = paste0(my_email_address, " (", my_organization, ")")
+
+print(ua)
 
 get_docs = function(CIK_list, type, before, page, count, ua){
     
@@ -92,80 +114,49 @@ get_docs = function(CIK_list, type, before, page, count, ua){
     
 }
 
-# User Agent declaration
-
-get_sec <- function(url, ua){
-    
-    res <- httr::GET(url = url, 
-                     httr::user_agent(ua),
-                     add_headers("user-agent" = ua))
-    
-    if (res$status == 200){
-        # Use read_xml or read_html based on the url
-        if (str_detect(string = url, pattern = regex('xml$', ignore_case = TRUE))){
-            doc <- xml2::read_xml(res)
-        } else {
-            doc <- xml2::read_html(res, base_url = url, options = "HUGE")    
-        }
-    } else if (res$status == "403") {
-        stop(glue("403 Error: Too many requests. Try waiting a few minutes and restart the search."))
-    } else if (res$status != "200" | res$headers["content-type"] != "application/atom+xml") {
-        stop(paste0("Error: Could not find company: ", issuer_cik))
-    }
-    
-    return(doc)
-    
-}
-
-# Process daily filings text file ----
-date_i = as.Date('2021-06-02')
-day_i = lubridate::day(date_i)
-month_i = lubridate::month(date_i)
-quarter_i = lubridate::quarter(date_i)
-year_i = lubridate::year(date_i)
-
-# Create the URL
-url_i = paste0("https://www.sec.gov/Archives/edgar/daily-index/", year_i, 
-               "/QTR", quarter_i, 
-               "/form.", year_i, 
-               str_pad(month_i, 2, 'left', 0), 
-               str_pad(day_i, 2, 'left', 0), 
-               ".idx")
-
-url_i = paste0("https://www.sec.gov/Archives/edgar/daily-index/2021/QTR2/form.20210602.idx")
-
-form_txt_i = fread(input=url_i, header=FALSE, skip=11, fill = TRUE, sep = '\n')
-
-process_form_txt_i = function(form_txt_i){
-    
-    form_txt_i[, form_type := str_trim(str_sub(V1, 1, 12))]
-    form_txt_i[, cik := as.integer(str_trim(str_sub(V1, 75, 86)))]
-    form_txt_i[, date_filed := str_trim(str_sub(V1, 87, 98))]
-    form_txt_i[, date_filed := as.Date(date_filed, '%Y%m%d')]
-    form_txt_i[, file_name := str_trim(str_sub(V1, 99, nchar(V1)))]
-    form_txt_i[, filing_dir := paste0('https://www.sec.gov/Archives/',file_name)]
-    form_txt_i[, filing_dir := str_remove_all(filing_dir, "\\-|\\.txt")]
-    
-    form_txt_i[, V1 := NULL]
-    
-    return(form_txt_i)
-    
-}
-
-daily_filings = process_form_txt_i(form_txt_i = form_txt_i)
-
-
-
-
-doc_df = get_docs(CIK_list = c('1661964', '1183818'), 
+doc_df_form4 = get_docs(CIK_list = c('1661964', '1183818'), 
                   type = '4', before = '', page = 1, count = 10,
-                  ua = "data.scientist@prospectdevelopment.org (Prospect Development)")
+                  ua = ua)
+print(head(doc_df_form4))
 
-doc_df = get_docs(CIK_list = c('1548760'), 
+doc_df_sc13 = get_docs(CIK_list = c('1548760'), 
                   type = 'SC 13G/A', before = '', page = 1, count = 10,
-                  ua = "data.scientist@prospectdevelopment.org (Prospect Development)")
+                  ua = ua)
+print(head(doc_df_sc13))
 
+# Approach 1B: Use API
+format_insider_filings <- function(input_cik){
+    
+    cik_info = jsonlite::read_json(glue('https://data.sec.gov/submissions/CIK{input_cik}.json'))
+    
+    filings_dt = data.table()
+    for (col in names(cik_info$filings$recent)){
+        set(x = filings_dt, j = str_to_lower(col), value = unlist(cik_info$filings$recent[[col]]))
+    }
 
+    filings_dt[, filing_detail_url := paste0('https://www.sec.gov/Archives/edgar/data/',
+                               input_cik, '/',
+                               str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
+                               primarydocument)]
+    
+    filings_dt[, url := paste0('https://www.sec.gov/Archives/edgar/data/',
+                               input_cik, '/',
+                               str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
+                               str_remove(string = primarydocument, pattern = '^\\w+/'))]
+    
+    filings_dt[, txt_doc := paste0('https://www.sec.gov/Archives/edgar/data/',
+                               input_cik, '/',
+                               str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
+                               accessionnumber, ".txt")]
+    
+    return(filings_dt)
+}
+
+filings = format_insider_filings(input_cik = '0001693709')
+
+print(head(filings))
+
+# Approach 2: Directory Crawling ----
 get_direcory_listing <- function(input_cik, ua) {
     
     # Create directory listing URL for based on insiders CIK. 
@@ -201,40 +192,46 @@ get_direcory_listing <- function(input_cik, ua) {
     
 }
 
-input_cik = '1661964'
-ua = "data.scientist@prospectdevelopment.org (Prospect Development)"
+input_cik = '0001661964'
 directories = get_direcory_listing(input_cik, ua)
 directories[1:5]
 
 
-input_cik = '0001548760'
+# Approach 3: Bulk Download ----
+date_i = as.Date('2021-06-02')
+day_i = lubridate::day(date_i)
+month_i = lubridate::month(date_i)
+quarter_i = lubridate::quarter(date_i)
+year_i = lubridate::year(date_i)
 
-format_insider_filings <- function(input_cik){
-    
-    cik_info = jsonlite::read_json(glue('https://data.sec.gov/submissions/CIK{input_cik}.json'))
-    
-    filings_dt = data.table()
-    for (col in names(cik_info$filings$recent)){
-        set(x = filings_dt, j = str_to_lower(col), value = unlist(cik_info$filings$recent[[col]]))
-    }
+# Create the URL
+url_i = paste0("https://www.sec.gov/Archives/edgar/daily-index/", year_i, 
+               "/QTR", quarter_i, 
+               "/form.", year_i, 
+               str_pad(month_i, 2, 'left', 0), 
+               str_pad(day_i, 2, 'left', 0), 
+               ".idx")
 
-    filings_dt[, filing_detail_url := paste0('https://www.sec.gov/Archives/edgar/data/',
-                               input_cik, '/',
-                               str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
-                               primarydocument)]
+form_txt_i = fread(input=url_i, header=FALSE, skip=11, fill = TRUE, sep = '\n')
+
+process_form_txt_i = function(form_txt_i){
     
-    filings_dt[, url := paste0('https://www.sec.gov/Archives/edgar/data/',
-                               input_cik, '/',
-                               str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
-                               str_remove(string = primarydocument, pattern = '^\\w+/'))]
+    form_txt_i[, form_type := str_trim(str_sub(V1, 1, 12))]
+    form_txt_i[, cik := as.integer(str_trim(str_sub(V1, 75, 86)))]
+    form_txt_i[, date_filed := str_trim(str_sub(V1, 87, 98))]
+    form_txt_i[, date_filed := as.Date(date_filed, '%Y%m%d')]
+    form_txt_i[, file_name := str_trim(str_sub(V1, 99, nchar(V1)))]
+    form_txt_i[, filing_dir := paste0('https://www.sec.gov/Archives/',file_name)]
+    form_txt_i[, filing_dir := str_remove_all(filing_dir, "\\-|\\.txt")]
     
-    filings_dt[, txt_doc := paste0('https://www.sec.gov/Archives/edgar/data/',
-                               input_cik, '/',
-                               str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
-                               accessionnumber, ".txt")]
+    form_txt_i[, V1 := NULL]
     
-    return(filings_dt)
+    return(form_txt_i)
+    
 }
+
+daily_filings = process_form_txt_i(form_txt_i = form_txt_i)
+print(head(daily_filings))
 
 
 # XML parsing example ----
@@ -252,23 +249,14 @@ xml_find_all(doc, ".//rptOwnerName")
 # Select text directly
 xml_text(xml_find_all(doc, ".//rptOwnerName"))
 
-###
-
-
-
-
-
-
+# Select nonderivative transaction nodes
 url = 'https://www.sec.gov/Archives/edgar/data/0001513142/000162643119000014/edgar.xml'
 doc = xml2::read_xml(url)
 nd_transactions = xml_children(xml_find_all(doc, ".//nonDerivativeTable"))
+print(nd_transactions)
 
-###
-
-fil = format_insider_filings(input_cik = '0001693709')
-
-
-process_form4 = function(filing_doc_row){
+# Transform Form 4 ----
+process_form4 = function(filing_doc_row, ua){
     
     # Basic Form 4 conversion function
     
@@ -283,8 +271,7 @@ process_form4 = function(filing_doc_row){
         next
     }
     
-    read_xml_link <- get_sec(url = url, 
-                             ua = "data.scientist@prospectdevelopment.org (Prospect Development)")
+    read_xml_link <- get_sec(url = url, ua = ua)
     
     results_l = list()
                 
@@ -389,21 +376,42 @@ process_form4 = function(filing_doc_row){
         results_df[, period_of_report := period_of_report]
         
         return(results_df)
-        
-        
     }
-    
-
-    
 }
 
-
-
 # Get the filings for CIK 0001693709
-fil = format_insider_filings(input_cik = '0001693709')
+filings = format_insider_filings(input_cik = '0001693709')
 
 # Process one Form 4
-form4 = process_form4(filing_doc_row = fil[1])
-View(form4)
+form4 = process_form4(filing_doc_row = filings[1], ua = ua)
+print(form4)
 
+# SC13 ----
+sc13 = read_html('https://www.sec.gov/Archives/edgar/data/0001548760/000119312519040765/d670490dsc13ga.htm')
+sc13_tables = xml_find_all(sc13, "//table")
+ownership_table_raw <- sc13_tables[grepl(x = as.character(sc13_tables), 
+                                         pattern = "SHARED.*POWER|SOLE.*POWER",
+                                        ignore.case = TRUE)][1]
+ownership_table <- ownership_table_raw[[1]] %>% rvest::html_table(header = FALSE,
+                                                           trim = FALSE,
+                                                           fill = TRUE)
+
+ownership_table <- t(unique(t(ownership_table)))
+
+l = list()
+
+for (c in seq(ncol(ownership_table))){
+    l[[length(l) + 1]] = data.table(ownership_table[, c])
+}
+
+shares_df = rbindlist(l)
+shares_df = shares_df[V1 %like% "SHARED.*POWER|SOLE.*POWER"]
+shares_df[, sc13_shares_category := str_extract(shares_df$V1, 
+                                                "SHARED.*POWER|SOLE.*POWER")]
+shares_df[, sc13_shares_count := str_trim(str_extract(
+    shares_df$V1, "(\\s|^)\\d+(,\\d+)*(\\s|$)"))]
+shares_df[, sc13_shares_count := as.numeric(
+    str_remove_all(sc13_shares_count, ","))]
+shares_df[, V1 := NULL]
+print(shares_df)
 
