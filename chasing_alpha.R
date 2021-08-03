@@ -11,6 +11,8 @@ library(stringi)
 library(xml2)
 library(rvest)
 
+# Accessing EDGAR Data general info: https://www.sec.gov/os/accessing-edgar-data
+
 # Parse CIK lookup file ----
 suffixes = 'JR$|JR\\.$|SR$|SR\\.$|II$|III$|IV$|ESQ$|ESQ\\.$|\\sMD$'
 
