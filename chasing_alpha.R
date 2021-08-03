@@ -37,6 +37,8 @@ count = 20
 page = 1
 
 
+# 3 Approaches for assembling links to insiders' filings ----
+
 # Approach 1: Use API ----
 
 # User Agent declaration
@@ -63,6 +65,7 @@ get_sec <- function(url, ua){
     
 }
 
+# User Agent string construction 
 my_email_address = readline(prompt = 'enter email address: ')
 my_organization = readline(prompt = 'enter organization name: ')
 ua = paste0(my_email_address, " (", my_organization, ")")
@@ -87,7 +90,6 @@ get_docs = function(CIK_list, type, before, page, count, ua){
                        "&output=atom")
         
         doc <- get_sec(url = href, ua = ua)
-        # doc <- xml2::read_xml(res)
         doc <- xml_ns_strip(doc)
         
         insider = xml2::xml_text(xml2::xml_find_first(x = doc, ".//company-info//conformed-name"))
@@ -114,17 +116,20 @@ get_docs = function(CIK_list, type, before, page, count, ua){
     
 }
 
+# Specify form type in `type`
+# Get Form 4 docs
 doc_df_form4 = get_docs(CIK_list = c('1661964', '1183818'), 
-                  type = '4', before = '', page = 1, count = 10,
-                  ua = ua)
+                        type = '4', before = '', page = 1, count = 10,
+                        ua = ua)
 print(head(doc_df_form4))
 
+# Get SC 13G/A docs
 doc_df_sc13 = get_docs(CIK_list = c('1548760'), 
-                  type = 'SC 13G/A', before = '', page = 1, count = 10,
-                  ua = ua)
+                       type = 'SC 13G/A', before = '', page = 1, count = 10,
+                       ua = ua)
 print(head(doc_df_sc13))
 
-# Approach 1B: Use API
+# Approach 1B: Use API ----
 format_insider_filings <- function(input_cik){
     
     cik_info = jsonlite::read_json(glue('https://data.sec.gov/submissions/CIK{input_cik}.json'))
@@ -133,11 +138,11 @@ format_insider_filings <- function(input_cik){
     for (col in names(cik_info$filings$recent)){
         set(x = filings_dt, j = str_to_lower(col), value = unlist(cik_info$filings$recent[[col]]))
     }
-
+    
     filings_dt[, filing_detail_url := paste0('https://www.sec.gov/Archives/edgar/data/',
-                               input_cik, '/',
-                               str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
-                               primarydocument)]
+                                             input_cik, '/',
+                                             str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
+                                             primarydocument)]
     
     filings_dt[, url := paste0('https://www.sec.gov/Archives/edgar/data/',
                                input_cik, '/',
@@ -145,9 +150,9 @@ format_insider_filings <- function(input_cik){
                                str_remove(string = primarydocument, pattern = '^\\w+/'))]
     
     filings_dt[, txt_doc := paste0('https://www.sec.gov/Archives/edgar/data/',
-                               input_cik, '/',
-                               str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
-                               accessionnumber, ".txt")]
+                                   input_cik, '/',
+                                   str_remove_all(string = accessionnumber, pattern = '\\-'), '/',
+                                   accessionnumber, ".txt")]
     
     return(filings_dt)
 }
@@ -194,10 +199,13 @@ get_direcory_listing <- function(input_cik, ua) {
 
 input_cik = '0001661964'
 directories = get_direcory_listing(input_cik, ua)
+
+# This returns all of the valid document sub directories 
+# (CIK + AccessionNumber)
 directories[1:5]
 
 
-# Approach 3: Bulk Download ----
+# Approach 3: Bulk Download of daily filings text file ----
 date_i = as.Date('2021-06-02')
 day_i = lubridate::day(date_i)
 month_i = lubridate::month(date_i)
@@ -274,7 +282,7 @@ process_form4 = function(filing_doc_row, ua){
     read_xml_link <- get_sec(url = url, ua = ua)
     
     results_l = list()
-                
+    
     if (form %in% c('3','4','5')){
         issuer <- str_to_upper(xml_text(xml_find_first(read_xml_link, ".//issuerName")))
         issuer_CIK <- str_to_upper(xml_text(xml_find_first(read_xml_link, ".//issuerCik")))
@@ -342,7 +350,7 @@ process_form4 = function(filing_doc_row, ua){
         der_l = list()
         
         all_der_nodes <- xml_children(xml_find_all(read_xml_link, ".//derivativeTable"))
-
+        
         if(length(all_der_nodes) == 0){
             all_der_nodes <- xml_find_all(read_xml_link, ".//derivativeSecurity")
         }
@@ -391,10 +399,10 @@ sc13 = read_html('https://www.sec.gov/Archives/edgar/data/0001548760/00011931251
 sc13_tables = xml_find_all(sc13, "//table")
 ownership_table_raw <- sc13_tables[grepl(x = as.character(sc13_tables), 
                                          pattern = "SHARED.*POWER|SOLE.*POWER",
-                                        ignore.case = TRUE)][1]
+                                         ignore.case = TRUE)][1]
 ownership_table <- ownership_table_raw[[1]] %>% rvest::html_table(header = FALSE,
-                                                           trim = FALSE,
-                                                           fill = TRUE)
+                                                                  trim = FALSE,
+                                                                  fill = TRUE)
 
 ownership_table <- t(unique(t(ownership_table)))
 
@@ -414,4 +422,3 @@ shares_df[, sc13_shares_count := as.numeric(
     str_remove_all(sc13_shares_count, ","))]
 shares_df[, V1 := NULL]
 print(shares_df)
-
